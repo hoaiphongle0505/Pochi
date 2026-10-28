@@ -1,0 +1,52 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build pochi.exe
+        run: cargo build --release --locked
+
+      - name: Read version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $nsis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (!(Test-Path $nsis)) { choco install nsis -y --no-progress }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          & $nsis /DVER=${{ steps.ver.outputs.version }} /DEXE=target\release\pochi.exe installer.nsi
+          Copy-Item target\release\pochi.exe dist\Pochi-Portable-${{ steps.ver.outputs.version }}.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pochi-${{ steps.ver.outputs.version }}
+          path: dist/*.exe
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.exe
+          generate_release_notes: true

@@ -1,0 +1,42 @@
+[package]
+name = "pochi"
+description = "A lightweight Dynamic Island-style notch for Windows, with Pochi the dog"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/hoaiphongle0505/Pochi"
+keywords = ["windows", "notch", "dynamic-island", "pomodoro", "water-reminder"]
+version = "3.2.0"
+edition = "2021"
+build = "build.rs"
+
+[[bin]]
+name = "pochi"
+path = "src/main.rs"
+
+[build-dependencies]
+embed-resource = "3"
+
+[dependencies]
+tiny-skia = "0.11"
+ab_glyph = "0.2"
+resvg = { version = "0.45", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+  "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm",
+  "Win32_UI_HiDpi", "Win32_UI_Shell", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_LibraryLoader",
+  "Win32_System_Threading", "Win32_System_Power", "Win32_System_Registry", "Win32_Media", "Win32_Media_Audio",
+  "Win32_UI_Accessibility", "Win32_Graphics_Imaging", "Win32_System_Com", "Win32_System_Com_StructuredStorage",
+  "Win32_Networking_WinHttp", "Win32_Security", "Win32_System_SystemInformation", "Win32_System_Time",
+  "Win32_System_ProcessStatus", "Win32_UI_Controls",
+  "Media_Control", "Foundation", "Storage_Streams",
+] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
