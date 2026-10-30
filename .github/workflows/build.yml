@@ -39,6 +39,45 @@ jobs:
           & $nsis /DVER=${{ steps.ver.outputs.version }} /DEXE=target\release\pochi.exe installer.nsi
           Copy-Item target\release\pochi.exe dist\Pochi-Portable-${{ steps.ver.outputs.version }}.exe
 
+      - name: Sign Windows executables
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: |
+          $hasCertificate = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_PFX_BASE64)
+          $hasPassword = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_PFX_PASSWORD)
+          if (-not $hasCertificate -and -not $hasPassword) {
+            Write-Host "Code signing is not configured; executables will remain unsigned."
+            exit 0
+          }
+          if (-not $hasCertificate -or -not $hasPassword) {
+            throw "Set both WINDOWS_PFX_BASE64 and WINDOWS_PFX_PASSWORD repository secrets to enable code signing."
+          }
+
+          $certificatePath = Join-Path $env:RUNNER_TEMP "pochi-signing.pfx"
+          try {
+            [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_PFX_BASE64))
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse |
+              Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1
+            if (-not $signtool) {
+              throw "Windows SDK signtool.exe was not found on the runner."
+            }
+
+            Get-ChildItem dist -Filter *.exe | ForEach-Object {
+              & $signtool.FullName sign /fd SHA256 /td SHA256 /tr https://timestamp.digicert.com /f $certificatePath /p $env:WINDOWS_PFX_PASSWORD $_.FullName
+              if ($LASTEXITCODE -ne 0) {
+                throw "Signing failed for $($_.Name)."
+              }
+            }
+          }
+          finally {
+            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
+          }
+
       - uses: actions/upload-artifact@v4
         with:
           name: Pochi-${{ steps.ver.outputs.version }}

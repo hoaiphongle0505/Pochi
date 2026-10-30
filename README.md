@@ -25,7 +25,7 @@
 
 | Page | What it does |
 |---|---|
-| **Water** | Daily goal, reminders inside your active hours, percent ring or hourly bars (click to switch), in-notch settings for bottle size, goal and hours |
+| **Water** | Daily goal, reminders inside your active hours that stay visible until you drink or snooze for 10 minutes, percent ring or hourly bars (click to switch), in-notch settings for bottle size, goal and hours |
 | **To-do** | Add tasks right in the notch, optional reminder time, *Daily* tasks that reset every morning |
 | **Pomodoro** | Focus / short / long breaks with a glowing ring and session stats |
 | **Calendar** | Clock, month view and upcoming events with reminders |
@@ -50,10 +50,9 @@ Other details:
 
 ## Install
 
-Download the latest **`Pochi-Setup-x.y.z.exe`** from [Releases](../../releases) and run it. It installs per-user, so no admin rights are needed, and adds Start-menu and desktop shortcuts.
-Prefer no installer? Grab **`Pochi-Portable-x.y.z.exe`**: it's a single file.
+Download the latest **`Pochi-Setup-x.y.z.exe`** from [Releases](../../releases) and run it. The installer asks for administrator permission, installs Pochi under Program Files, and adds Start-menu and desktop shortcuts available to all users. Pochi's automatic startup setting remains per-user. Prefer no installer? Grab **`Pochi-Portable-x.y.z.exe`**: it's a single file.
 
-> Windows SmartScreen may warn because the app isn't code-signed: click **More info → Run anyway**.
+Unsigned releases may trigger a Windows SmartScreen warning. Signing can be enabled for release builds as described under [Windows code signing](#windows-code-signing), but a trusted signature does not guarantee that SmartScreen will stop warning, especially for new or low-reputation releases.
 
 Your data lives in `%APPDATA%\Pochi\pochi-data.json`.
 
@@ -84,6 +83,15 @@ On Linux/macOS, `cargo run --release -- /tmp/pochi-preview` renders every notch 
 ### Releases
 
 Pushing a tag such as `v3.2.0` makes GitHub Actions build the exe and installer on Windows and attach them to a new Release (see `.github/workflows/build.yml`). Bump `version` in `Cargo.toml` first.
+
+### Windows code signing
+
+The Windows release workflow can sign both the installer and portable executable with an Authenticode certificate. To enable it, obtain a valid code-signing certificate issued to the publisher by a trusted certificate authority, export it as a password-protected PFX, then add these repository Actions secrets:
+
+- `WINDOWS_PFX_BASE64`: the PFX file encoded as Base64.
+- `WINDOWS_PFX_PASSWORD`: the PFX export password.
+
+The workflow uses SHA-256 and a public RFC 3161 timestamp service, and removes its temporary PFX after signing. If either secret is missing, both executables remain unsigned; no self-signed certificate is generated. A certificate authority must verify the publisher identity before issuing a trusted certificate, and SmartScreen reputation is separate from signing, so warnings may continue until reputation is established.
 
 ## How it works
 
