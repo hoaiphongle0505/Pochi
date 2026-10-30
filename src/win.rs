@@ -167,7 +167,7 @@ pub fn run() {
             }
             let mut sanim = false;
             if let Some(sw) = w.settings.as_mut() {
-                sanim = sw.ui.animating(dt);
+                sanim = sw.ui.animating(dt, w.app.d.settings.reduced_motion);
                 if sanim || sw.ui.focus.is_some() { sw.dirty = true; }
                 if sw.dirty { let _ = InvalidateRect(Some(sw.hwnd), None, false); }
             }
@@ -264,7 +264,8 @@ impl Win {
             let pos = POINT { x: self.origin.0, y: self.origin.1 };
             let size = SIZE { cx: w, cy: h };
             let zero = POINT { x: 0, y: 0 };
-            let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: 255, AlphaFormat: AC_SRC_ALPHA as u8 };
+            let opacity = self.app.d.settings.opacity.clamp(30, 100) as u16;
+            let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: (opacity * 255 / 100) as u8, AlphaFormat: AC_SRC_ALPHA as u8 };
             let _ = UpdateLayeredWindow(self.hwnd, None, Some(&pos), Some(&size), Some(dc), Some(&zero), COLORREF(0), Some(&blend), ULW_ALPHA);
             let now = now_ms();
             if self.ui.expanded && now - self.last_topmost > 5000 {
@@ -476,6 +477,12 @@ impl Win {
                     let p: Vec<u16> = crate::data::data_dir().to_string_lossy().encode_utf16().chain(Some(0)).collect();
                     let _ = ShellExecuteW(None, w!("open"), PCWSTR(p.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
                 },
+                SOut::Platform("updates") => unsafe {
+                    let result = ShellExecuteW(None, w!("open"), w!("https://github.com/hoaiphongle0505/Pochi/releases/latest"), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
+                    if result.0 as usize <= 32 {
+                        let _ = MessageBoxW(Some(self.hwnd), w!("Could not open GitHub releases. Visit github.com/hoaiphongle0505/Pochi/releases/latest in your browser."), w!("Pochi"), MB_OK | MB_ICONERROR);
+                    }
+                },
                 SOut::Platform(_) => unsafe { self.app.d.save(); let nid = self.nid(); let _ = Shell_NotifyIconW(NIM_DELETE, &nid); PostQuitMessage(0); },
                 SOut::Close => unsafe { if let Some(sw) = &self.settings { let _ = DestroyWindow(sw.hwnd); } },
                 SOut::Focus(_) | SOut::Redraw => {}
@@ -538,6 +545,11 @@ impl Win {
             sep(menu);
             add(menu, "Start with Windows", s.start_with_windows, Some(Action::SetBool("startWithWindows", !s.start_with_windows)), &mut acts);
             add(menu, "Pochi mascot", s.mascot, Some(Action::SetBool("mascot", !s.mascot)), &mut acts);
+            add(menu, "Reduce motion", s.reduced_motion, Some(Action::SetBool("reducedMotion", !s.reduced_motion)), &mut acts);
+            let m = sub(menu, "Preset");
+            for (id, label) in [("focus", "Focus"), ("work", "Work"), ("minimal", "Minimal")] {
+                add(m, label, false, Some(Action::SetPreset(id)), &mut acts);
+            }
             let m = sub(menu, "Pochi says hi");
             for (v, l) in [(0, "Off"), (60, "Every 1 min"), (300, "Every 5 min"), (900, "Every 15 min")] {
                 add(m, l, s.idle_after == v, Some(Action::SetIdle(v)), &mut acts);
@@ -560,7 +572,7 @@ impl Win {
             }
             sep(menu);
             let m = sub(menu, "Notch pages");
-            for (id, l) in [("media", "Music"), ("calendar", "Calendar"), ("water", "Water"), ("todo", "To-do"), ("pomodoro", "Pomodoro")] {
+            for (id, l) in [("home", "Home & quick controls"), ("notifications", "Notifications"), ("media", "Music"), ("calendar", "Calendar"), ("water", "Water"), ("todo", "To-do"), ("pomodoro", "Pomodoro")] {
                 add(m, l, s.pages.get(id), Some(Action::SetPage(id, !s.pages.get(id))), &mut acts);
             }
             let m = sub(menu, "Clock && header");

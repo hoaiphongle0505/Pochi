@@ -5,7 +5,7 @@ license = "MIT"
 readme = "README.md"
 repository = "https://github.com/hoaiphongle0505/Pochi"
 keywords = ["windows", "notch", "dynamic-island", "pomodoro", "water-reminder"]
-version = "3.2.0"
+version = "3.4.0"
 edition = "2021"
 build = "build.rs"
 

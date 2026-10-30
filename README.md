@@ -25,11 +25,15 @@
 
 | Page | What it does |
 |---|---|
+| **Home** | Quick cards for music, focus timer, water, upcoming Pochi events, open to-dos, and recent Pochi alerts |
+| **Notifications** | Browse up to four of the five most recent Pochi alerts from the current app session; clear them any time |
 | **Water** | Daily goal, reminders inside your active hours that stay visible until you drink or snooze for 10 minutes, percent ring or hourly bars (click to switch), in-notch settings for bottle size, goal and hours |
 | **To-do** | Add tasks right in the notch, optional reminder time, *Daily* tasks that reset every morning |
 | **Pomodoro** | Focus / short / long breaks with a glowing ring and session stats |
 | **Calendar** | Clock, month view and upcoming events with reminders |
 | **Music** | Controls whatever is playing (Spotify, YouTube in a browser, Media Player…), album art, seek bar, volume and synced lyrics from [lrclib.net](https://lrclib.net) |
+
+The Home cards use Pochi's existing local data and Windows media controls; they do not read the Windows clipboard, system calendar, or other apps' notification history. Recent alerts are kept in memory only and are not saved to disk.
 
 **Reminders** pop up as a compact capsule instead of opening the whole notch. The water drop shakes, and one click logs your drink:
 
@@ -40,6 +44,8 @@
 **Settings** window with a section for everything:
 
 <p align="center"><img src="docs/settings-water.png" width="720" alt="Settings window"></p>
+
+Settings include Focus, Work, and Minimal presets; module visibility; capsule color and opacity; and a reduce-motion option. Resetting preferences keeps your tasks, events, water logs, and focus-session history.
 
 Other details:
 
@@ -82,7 +88,7 @@ On Linux/macOS, `cargo run --release -- /tmp/pochi-preview` renders every notch 
 
 ### Releases
 
-Pushing a tag such as `v3.2.0` makes GitHub Actions build the exe and installer on Windows and attach them to a new Release (see `.github/workflows/build.yml`). Bump `version` in `Cargo.toml` first.
+Pushing a tag such as `v3.3.0` makes GitHub Actions build the exe and installer on Windows and attach them to a new Release (see `.github/workflows/build.yml`). Bump `version` in `Cargo.toml` first.
 
 ### Windows code signing
 

@@ -9,6 +9,8 @@ fn t() -> bool { true }
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Pages {
+    pub home: bool,
+    pub notifications: bool,
     pub media: bool,
     pub calendar: bool,
     pub water: bool,
@@ -16,15 +18,15 @@ pub struct Pages {
     pub pomodoro: bool,
 }
 impl Default for Pages {
-    fn default() -> Self { Pages { media: true, calendar: true, water: true, todo: true, pomodoro: true } }
+    fn default() -> Self { Pages { home: true, notifications: true, media: true, calendar: true, water: true, todo: true, pomodoro: true } }
 }
 impl Pages {
     pub fn get(&self, id: &str) -> bool {
-        match id { "media" => self.media, "calendar" => self.calendar, "water" => self.water, "todo" => self.todo, "pomodoro" => self.pomodoro, _ => false }
+        match id { "home" => self.home, "notifications" => self.notifications, "media" => self.media, "calendar" => self.calendar, "water" => self.water, "todo" => self.todo, "pomodoro" => self.pomodoro, _ => false }
     }
     pub fn set(&mut self, id: &str, v: bool) {
-        match id { "media" => self.media = v, "calendar" => self.calendar = v, "water" => self.water = v, "todo" => self.todo = v, "pomodoro" => self.pomodoro = v, _ => {} }
-        if !(self.media || self.calendar || self.water || self.todo || self.pomodoro) { self.set(id, true); }
+        match id { "home" => self.home = v, "notifications" => self.notifications = v, "media" => self.media = v, "calendar" => self.calendar = v, "water" => self.water = v, "todo" => self.todo = v, "pomodoro" => self.pomodoro = v, _ => {} }
+        if !(self.home || self.notifications || self.media || self.calendar || self.water || self.todo || self.pomodoro) { self.set(id, true); }
     }
 }
 
@@ -34,6 +36,9 @@ pub struct Settings {
     #[serde(default = "t")] pub start_with_windows: bool,
     pub size: serde_json::Value, // "auto" | 100 | 115 | 130 | 150
     pub minimal: bool,
+    pub capsule_color: String,
+    pub opacity: u8,
+    pub reduced_motion: bool,
     #[serde(default = "t")] pub mascot: bool,
     pub idle_after: u32,
     #[serde(default = "t")] pub sounds: bool,
@@ -60,10 +65,11 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            start_with_windows: true, size: serde_json::json!("auto"), minimal: false, mascot: true, idle_after: 60,
+            start_with_windows: true, size: serde_json::json!("auto"), minimal: false, capsule_color: "midnight".into(), opacity: 100,
+            reduced_motion: false, mascot: true, idle_after: 60,
             sounds: true, hide_fullscreen: true, auto_hide: false, hidden: false, display: "main".into(),
             hover_expand: true, collapse_delay: 400, clock24: false, show_battery: true, show_date: true,
-            peek: true, peek_seconds: 6, sys_notif: true, event_lead: 10, page: serde_json::json!("water"),
+            peek: true, peek_seconds: 6, sys_notif: true, event_lead: 10, page: serde_json::json!("home"),
             pages: Pages::default(), media_peek: true, media_pill: true, lyrics: true, water_view: "gauge".into(),
         }
     }
@@ -73,7 +79,7 @@ impl Settings {
         match &self.size { serde_json::Value::Number(n) => (n.as_f64().unwrap_or(100.0) / 100.0) as f32, _ => 0.86 }
     }
     pub fn page_id(&self) -> String {
-        match &self.page { serde_json::Value::String(s) => s.clone(), _ => "water".into() }
+        match &self.page { serde_json::Value::String(s) => s.clone(), _ => "home".into() }
     }
 }
 
@@ -175,5 +181,40 @@ impl Data {
             let tmp = data_file().with_extension("json.tmp");
             if std::fs::write(&tmp, s).is_ok() { let _ = std::fs::rename(&tmp, data_file()); }
         }
+    }
+
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn older_settings_json_uses_defaults_for_new_options_and_pages() {
+        let settings: Settings = serde_json::from_str(r#"{"page":"water","pages":{"water":true}}"#).unwrap();
+
+        assert_eq!(settings.page_id(), "water");
+        assert_eq!(settings.capsule_color, "midnight");
+        assert_eq!(settings.opacity, 100);
+        assert!(!settings.reduced_motion);
+        assert!(settings.pages.get("home"));
+        assert!(settings.pages.get("notifications"));
+    }
+
+    #[test]
+    fn invalid_saved_page_falls_back_to_home() {
+        let settings: Settings = serde_json::from_str(r#"{"page":null}"#).unwrap();
+
+        assert_eq!(settings.page_id(), "home");
+    }
+
+    #[test]
+    fn disabling_every_page_keeps_the_selected_page_enabled() {
+        let mut pages = Pages::default();
+        for id in ["home", "notifications", "media", "calendar", "water", "todo", "pomodoro"] {
+            pages.set(id, false);
+        }
+
+        assert!(["home", "notifications", "media", "calendar", "water", "todo", "pomodoro"].iter().any(|id| pages.get(id)));
     }
 }
