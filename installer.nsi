@@ -1,7 +1,7 @@
 Unicode true
 !define APP "Pochi"
 !ifndef VER
-  !define VER "3.2.0"
+  !define VER "3.3.0"
 !endif
 !ifndef EXE
   !define EXE "target\release\pochi.exe"

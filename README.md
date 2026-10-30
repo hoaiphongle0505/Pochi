@@ -82,7 +82,7 @@ On Linux/macOS, `cargo run --release -- /tmp/pochi-preview` renders every notch 
 
 ### Releases
 
-Pushing a tag such as `v3.2.0` makes GitHub Actions build the exe and installer on Windows and attach them to a new Release (see `.github/workflows/build.yml`). Bump `version` in `Cargo.toml` first.
+Pushing a tag such as `v3.3.0` makes GitHub Actions build the exe and installer on Windows and attach them to a new Release (see `.github/workflows/build.yml`). Bump `version` in `Cargo.toml` first.
 
 ### Windows code signing
 
