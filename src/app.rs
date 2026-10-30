@@ -74,6 +74,8 @@ fn uid() -> String {
 }
 
 pub const PAGE_IDS: [&str; 5] = ["media", "calendar", "water", "todo", "pomodoro"];
+pub const WATER_SNOOZE_MS: i64 = 10 * 60_000;
+pub const WATER_SNOOZE_MINUTES: i64 = 10;
 
 impl App {
     pub fn new(d: Data) -> App {
@@ -261,6 +263,7 @@ impl App {
                 self.schedule_water(now);
                 self.effects.push(Effect::Mood("happy"));
             }
+            WaterSnooze => { self.water_next_at = self.clamp_active(now + WATER_SNOOZE_MS); }
             WaterUndo => { if let Some(v) = self.d.water.log.get_mut(&time::day_key(now)) { v.pop(); } }
             WaterReset => { self.d.water.log.remove(&time::day_key(now)); self.schedule_water(now); }
             WaterToggle => { self.d.water.enabled = !self.d.water.enabled; self.schedule_water(now); }
@@ -369,9 +372,25 @@ pub fn parse_hm(s: &str) -> Option<(u32, u32)> {
     Some((a.parse().ok()?, b.parse().ok()?))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn water_snooze_defers_the_next_reminder_without_logging_a_drink() {
+        let mut app = App::new(Data::default());
+        let expected = app.clamp_active(now_ms() + WATER_SNOOZE_MS);
+
+        app.action(&Action::WaterSnooze);
+
+        assert!((app.water_next_at - expected).abs() <= 1000);
+        assert_eq!(app.water_today(), 0);
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
-    Drink, WaterUndo, WaterReset, WaterToggle, WaterGoal(i32), WaterBottle(i32), WaterHours(bool, i32),
+    Drink, WaterSnooze, WaterUndo, WaterReset, WaterToggle, WaterGoal(i32), WaterBottle(i32), WaterHours(bool, i32),
     WaterInterval(i32), WaterCup(i32), WaterView(bool),
     TodoAdd { text: String, time: Option<(u32, u32)>, daily: bool }, TodoToggle(String), TodoDelete(String), TodoClearDone,
     PomoToggle, PomoReset, PomoResetAll, PomoPhase(Phase), PomoSkip, PomoSet(u8, i32),

@@ -52,6 +52,7 @@ pub enum Act {
     EditTodos,
     Pet,
     AlertAction,
+    AlertSnooze,
     AlertOpen,
 }
 
@@ -61,7 +62,7 @@ pub enum Out { App(Action), Media(String), WantFocus(bool), Changed }
 
 struct Hit { r: (f32, f32, f32, f32), act: Act }
 
-pub struct Alert { kind: &'static str, page: &'static str, title: String, body: String, t0: f32, until: f32, done_at: f32 }
+pub struct Alert { kind: &'static str, page: &'static str, title: String, body: String, t0: f32, until: f32, done_at: f32, snoozed: bool }
 
 #[derive(Default)]
 pub struct Form { pub open: bool, pub text: String, pub time: Option<(u32, u32)>, pub daily: bool, pub day: i32 }
@@ -167,7 +168,7 @@ impl Ui {
     /* ============================ state changes ============================ */
 
     pub fn expand(&mut self) {
-        if self.expanded { return; }
+        if self.expanded || self.alert.as_ref().is_some_and(|a| a.kind == "water" && a.done_at < 0.0) { return; }
         self.end_cameo();
         self.expanded = true;
         self.last_active = self.clock;
@@ -198,6 +199,7 @@ impl Ui {
     }
 
     pub fn peek(&mut self, app: &App, page: &'static str, force: bool, quick: bool) {
+        if self.alert.as_ref().is_some_and(|a| a.kind == "water" && a.done_at < 0.0) { return; }
         let typing = self.focus.is_some();
         if app.d.settings.pages.get(page) && (page != self.page || self.water_edit) && !typing {
             self.prev_page = self.page;
@@ -213,6 +215,7 @@ impl Ui {
 
     /// compact reminder popup (water/to-do/pomodoro/event)
     pub fn alert(&mut self, app: &App, kind: &'static str, page: &'static str, title: String, body: String) {
+        if self.alert.as_ref().is_some_and(|a| a.kind == "water" && a.done_at < 0.0) { return; }
         if self.expanded {
             // already open: just jump to the page
             self.peek(app, page, true, false);
@@ -220,7 +223,7 @@ impl Ui {
         }
         self.end_cameo();
         let secs = (app.d.settings.peek_seconds as f32).max(6.0) + 2.0;
-        self.alert = Some(Alert { kind, page, title, body, t0: self.clock, until: self.clock + secs, done_at: -1.0 });
+        self.alert = Some(Alert { kind, page, title, body, t0: self.clock, until: self.clock + secs, done_at: -1.0, snoozed: false });
     }
 
     pub fn mood_happy(&mut self) { if self.cameo.on { self.cameo.pet_until = self.cameo.clock + 1.8; } }
@@ -298,12 +301,24 @@ impl Ui {
                 Some(Act::AlertAction) => {
                     let a = self.alert.as_mut().unwrap();
                     match a.kind {
-                        "water" => { out.push(Out::App(Action::Drink)); a.done_at = self.clock; a.until = self.clock + 1.8; }
+                        "water" if a.done_at < 0.0 => { out.push(Out::App(Action::Drink)); a.done_at = self.clock; a.until = self.clock + 1.8; }
+                        "water" => {}
                         "pomo" => { out.push(Out::App(Action::PomoToggle)); self.alert = None; }
                         _ => self.alert = None,
                     }
                 }
+                Some(Act::AlertSnooze) => {
+                    if let Some(a) = self.alert.as_mut() {
+                        if a.kind == "water" && a.done_at < 0.0 {
+                            out.push(Out::App(Action::WaterSnooze));
+                            a.done_at = self.clock;
+                            a.until = self.clock + 1.8;
+                            a.snoozed = true;
+                        }
+                    }
+                }
                 _ => {
+                    if self.alert.as_ref().is_some_and(|a| a.kind == "water" && a.done_at < 0.0) { return out; }
                     let page = self.alert.take().map(|a| a.page).unwrap_or(self.page);
                     if app.d.settings.pages.get(page) { self.prev_page = self.page; self.page = page; self.page_t = 1.0; }
                     self.expand();
@@ -399,7 +414,7 @@ impl Ui {
             Act::Lyrics => self.show_lyrics = !self.show_lyrics,
             Act::EditTodos => self.edit_todos = !self.edit_todos,
             Act::Pet => self.pet(app),
-            Act::AlertAction | Act::AlertOpen => {}
+            Act::AlertAction | Act::AlertSnooze | Act::AlertOpen => {}
         }
         out
     }
@@ -496,9 +511,10 @@ impl Ui {
 
         // hover → expand / leave → collapse
         if let Some(a) = &mut self.alert {
-            if self.expanded { self.alert = None; }
-            else if self.hovering && a.done_at < 0.0 { a.until = a.until.max(self.clock + 1.5); }
-            else if self.clock > a.until { self.alert = None; self.last_active = self.clock; }
+            let pending_water = a.kind == "water" && a.done_at < 0.0;
+            if self.expanded && !pending_water { self.alert = None; }
+            else if self.hovering && a.done_at < 0.0 && !pending_water { a.until = a.until.max(self.clock + 1.5); }
+            else if !pending_water && self.clock > a.until { self.alert = None; self.last_active = self.clock; }
         }
         if self.hovering && !self.expanded && s.hover_expand && self.hover_at >= 0.0 && self.alert.is_none() {
             let delay = if self.cameo.on { 2.5 } else { 0.07 };
@@ -575,7 +591,7 @@ impl Ui {
             self.pill_alpha.set(0.0);
         } else {
             self.w.tune(2.6, 0.95); self.h.tune(2.8, 0.95); self.r.tune(2.8, 0.95); self.ear.tune(2.8, 0.95);
-            let (w, h, r, e) = if self.alert.is_some() { (360.0, 60.0, 28.0, 14.0) }
+            let (w, h, r, e) = if self.alert.is_some() { (if self.alert.as_ref().is_some_and(|a| a.kind == "water") { 460.0 } else { 360.0 }, 60.0, 28.0, 14.0) }
                 else if autohide { (140.0, 6.0, 6.0, 5.0) }
                 else if minimal { (self.pill_w.max(110.0), 28.0, 17.0, 10.0) }
                 else { (self.pill_w.max(150.0), if self.hovering { 37.0 } else { 34.0 }, 22.0, 12.0) };
@@ -590,7 +606,8 @@ impl Ui {
         }
         for sp in self.tweens.values_mut() { if sp.step(dt) { anim = true; } }
         if self.page_t < 1.0 { self.page_t = (self.page_t + dt / 0.34).min(1.0); anim = true; }
-        if cameo_anim || self.alert.is_some() { anim = true; }
+        let alert_anim = self.alert.as_ref().is_some_and(|a| a.kind != "water" || self.clock - a.t0 < 1.6 || (a.done_at >= 0.0 && self.clock - a.done_at < 1.8));
+        if cameo_anim || alert_anim { anim = true; }
         if self.hovering && !self.expanded && self.hover_at >= 0.0 { anim = true; }
 
         // lyrics line change → small slide animation
@@ -814,10 +831,12 @@ impl Ui {
 
     fn draw_alert(&mut self, app: &App, cv: &mut Canvas, x0: f32, w: f32, h: f32) {
         let Some(a) = &self.alert else { return };
-        let (kind, title, body, t0, until, done_at) = (a.kind, a.title.clone(), a.body.clone(), a.t0, a.until, a.done_at);
+        let (kind, title, body, t0, until, done_at, snoozed) = (a.kind, a.title.clone(), a.body.clone(), a.t0, a.until, a.done_at, a.snoozed);
         // fade the content in once the capsule has grown
         let grow = clamp01((h - 34.0) / (60.0 - 34.0));
-        let al = smooth(0.55, 1.0, grow) * smooth(0.0, 0.25, until - self.clock + 0.25) * (1.0 - clamp01(self.pill_alpha.x));
+        let persistent = kind == "water" && done_at < 0.0;
+        let fade = if persistent { 1.0 } else { smooth(0.0, 0.25, until - self.clock + 0.25) };
+        let al = smooth(0.55, 1.0, grow) * fade * (1.0 - clamp01(self.pill_alpha.x));
         if al < 0.01 { return; }
         cv.alpha = al;
         let t = self.clock - t0;
@@ -869,14 +888,21 @@ impl Ui {
         }
         // text
         let tx = x0 + 64.0;
-        let (btn, btn_w) = if done { (String::new(), 0.0) } else {
-            let l = match kind { "water" => format!("+{} ml", app.water_sip()), "pomo" => if app.pomo.running { String::new() } else { "Start".into() }, _ => "OK".into() };
-            let bw = if l.is_empty() { 0.0 } else { cv.measure(&l, 12.5, W::Bold) + 26.0 };
-            (l, bw)
+        let btn = if done { String::new() } else {
+            match kind { "water" => format!("Drink +{} ml", app.water_sip()), "pomo" => if app.pomo.running { String::new() } else { "Start".into() }, _ => "OK".into() }
         };
-        let maxw = w - 64.0 - 16.0 - if btn_w > 0.0 { btn_w + 10.0 } else { 0.0 };
+        let btn_w = if btn.is_empty() || kind == "water" { 0.0 } else { cv.measure(&btn, 12.5, W::Bold) + 26.0 };
+        let water_btn_w = if persistent { cv.measure(&btn, 12.5, W::Bold) + 26.0 } else { 0.0 };
+        let snooze_w = if persistent { cv.measure("Snooze", 12.5, W::Bold) + 26.0 } else { 0.0 };
+        let action_w = btn_w + water_btn_w + snooze_w + if persistent { 8.0 } else { 0.0 };
+        let maxw = w - 64.0 - 16.0 - if action_w > 0.0 { action_w + 10.0 } else { 0.0 };
         let (t1, t2) = if done {
-            ("Nice! Keep it up".to_string(), format!("{} / {} L today", liters(app.water_today()), liters(app.d.water.goal)))
+            if snoozed {
+                let minutes = ((app.water_next_at - now_ms() + 59_999) / 60_000).max(0);
+                let body = if minutes <= WATER_SNOOZE_MINUTES { format!("Reminder in {} minutes", minutes) }
+                    else { format!("Next reminder at {}", time::hm24(app.water_next_at)) };
+                ("Snoozed".to_string(), body)
+            } else { ("Nice! Keep it up".to_string(), format!("{} / {} L today", liters(app.water_today()), liters(app.d.water.goal))) }
         } else if kind == "water" {
             ("Time to drink water".to_string(), format!("{} / {} L · {}%", liters(app.water_today()), liters(app.d.water.goal), (app.water_today() as f32 / app.d.water.goal as f32 * 100.0).round()))
         } else { (title, body) };
@@ -884,7 +910,18 @@ impl Ui {
         let t2 = cv.ellipsize(&t2, 12.0, W::Regular, maxw);
         cv.text(tx, icy - 2.0, &t1, 14.5, W::Bold, WHITE, 1.0);
         cv.text(tx, icy + 15.0, &t2, 12.0, W::Regular, MUTED, 1.0);
-        if btn_w > 0.0 {
+        if persistent {
+            let bx = x0 + w - 16.0 - water_btn_w - 8.0 - snooze_w;
+            let hov = self.hov(cv, bx, icy - 15.0, snooze_w, 30.0);
+            cv.rrect(bx, icy - 15.0, snooze_w, 30.0, 15.0, if hov { CHIP_H } else { CHIP }, 1.0);
+            cv.text_center(bx + snooze_w / 2.0, icy + 4.5, "Snooze", 12.5, W::Bold, WHITE, 1.0);
+            self.hit(cv, bx - 4.0, icy - 18.0, snooze_w + 8.0, 36.0, Act::AlertSnooze);
+            let drink_x = bx + snooze_w + 8.0;
+            let hov = self.hov(cv, drink_x, icy - 15.0, water_btn_w, 30.0);
+            cv.rrect(drink_x, icy - 15.0, water_btn_w, 30.0, 15.0, if hov { lighten(color) } else { color }, 1.0);
+            cv.text_center(drink_x + water_btn_w / 2.0, icy + 4.5, &btn, 12.5, W::Bold, 0x00243d, 1.0);
+            self.hit(cv, drink_x - 4.0, icy - 18.0, water_btn_w + 8.0, 36.0, Act::AlertAction);
+        } else if btn_w > 0.0 {
             let bx = x0 + w - 16.0 - btn_w;
             let hov = self.hov(cv, bx, icy - 15.0, btn_w, 30.0);
             cv.rrect(bx, icy - 15.0, btn_w, 30.0, 15.0, if hov { lighten(color) } else { color }, 1.0);
@@ -892,14 +929,16 @@ impl Ui {
             self.hit(cv, bx - 4.0, icy - 18.0, btn_w + 8.0, 36.0, Act::AlertAction);
         }
         // time-left hairline
-        if !done {
+        if !done && !persistent {
             let total = until - t0;
             let left = clamp01((until - self.clock) / total.max(0.1));
             cv.rrect(x0 + 28.0, h - 3.0, (w - 56.0) * left, 2.0, 1.0, color, 0.55);
         }
         self.hit(cv, x0, 0.0, w, h, Act::AlertOpen);
-        // keep the action button on top of the body hit
-        if let Some(i) = self.hits.iter().position(|h| h.act == Act::AlertAction) { let hb = self.hits.remove(i); self.hits.push(hb); }
+        // keep action buttons on top of the body hit
+        for action in [Act::AlertAction, Act::AlertSnooze] {
+            if let Some(i) = self.hits.iter().position(|h| h.act == action) { let hb = self.hits.remove(i); self.hits.push(hb); }
+        }
         cv.alpha = 1.0;
     }
 
@@ -1809,4 +1848,44 @@ fn lighten(c: u32) -> u32 { blend(c, 0xffffff, 0.12) }
 fn blend(a: u32, b: u32, t: f32) -> u32 {
     let ch = |s: u32| -> f32 { ((a >> s) & 255) as f32 * (1.0 - t) + ((b >> s) & 255) as f32 * t };
     ((ch(16) as u32) << 16) | ((ch(8) as u32) << 8) | ch(0) as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::Data;
+
+    #[test]
+    fn water_alert_stays_until_the_user_snoozes() {
+        let mut app = App::new(Data::default());
+        app.d.settings.mascot = false;
+        let mut ui = Ui::new(&app);
+        ui.alert(&app, "water", "water", "Time to drink water".into(), String::new());
+
+        ui.clock = ui.alert.as_ref().unwrap().until + 1.0;
+        let mut fonts = Fonts::load();
+        ui.update(&mut app, &mut fonts, 0.1);
+        assert!(ui.alert.is_some());
+
+        ui.hits.push(Hit { r: (0.0, 0.0, 10.0, 10.0), act: Act::AlertSnooze });
+        let out = ui.click(&mut app, (5.0, 5.0));
+
+        assert_eq!(out.last(), Some(&Out::App(Action::WaterSnooze)));
+        let alert = ui.alert.as_ref().unwrap();
+        assert!(alert.snoozed);
+        assert!(alert.done_at >= 0.0);
+    }
+
+    #[test]
+    fn clicking_the_water_alert_body_does_not_dismiss_it() {
+        let mut app = App::new(Data::default());
+        let mut ui = Ui::new(&app);
+        ui.alert(&app, "water", "water", "Time to drink water".into(), String::new());
+        ui.hits.push(Hit { r: (0.0, 0.0, 10.0, 10.0), act: Act::AlertOpen });
+
+        ui.click(&mut app, (5.0, 5.0));
+
+        assert!(ui.alert.is_some());
+        assert!(!ui.expanded);
+    }
 }
