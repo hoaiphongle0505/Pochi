@@ -117,9 +117,12 @@ impl SettingsUi {
         p.1 < 44.0 && !(p.0 < 40.0 && p.1 < 40.0) && !self.hits.iter().any(|(r, _)| inside(*r, p))
     }
 
-    pub fn animating(&mut self, dt: f32) -> bool {
+    pub fn animating(&mut self, dt: f32, reduced_motion: bool) -> bool {
         let mut a = false;
-        for k in self.knobs.values_mut() { if k.step(dt) { a = true; } }
+        for k in self.knobs.values_mut() {
+            if reduced_motion { k.snap(k.target); }
+            else if k.step(dt) { a = true; }
+        }
         a
     }
 
@@ -482,9 +485,17 @@ impl SettingsUi {
     fn general(&mut self, app: &App, cv: &mut Canvas) {
         let s = &app.d.settings;
         self.h1(cv, "General", "");
+        self.h2(cv, "Quick setup");
+        let presets = Ctl::Seg(vec![
+            ("Focus".into(), false, SAct::App(Action::SetPreset("focus"))),
+            ("Work".into(), false, SAct::App(Action::SetPreset("work"))),
+            ("Minimal".into(), false, SAct::App(Action::SetPreset("minimal"))),
+        ]);
+        let t = self.begin_card();
+        self.end_card(cv, t, vec![Row::col("Presets", "Change which modules are shown and how Pochi behaves. Your tasks, events, and history stay.", presets)]);
         self.h2(cv, "Startup");
         let t = self.begin_card();
-        self.end_card(cv, t, vec![Row::new("Start with Windows", "", sw("sww", s.start_with_windows, "startWithWindows"))]);
+        self.end_card(cv, t, vec![Row::new("Start with Windows", "Starts Pochi for your Windows account at sign-in; no administrator access is needed.", sw("sww", s.start_with_windows, "startWithWindows"))]);
         self.h2(cv, "Notch");
         let cur = s.size.as_u64().map(|v| v as u32);
         let size = Ctl::Seg([(None, "Compact"), (Some(100), "100%"), (Some(115), "115%"), (Some(130), "130%"), (Some(150), "150%")].iter()
@@ -508,6 +519,11 @@ impl SettingsUi {
         self.h2(cv, "Full screen");
         let t = self.begin_card();
         self.end_card(cv, t, vec![Row::new("Hide in full screen", "Games, videos and slides that fill the screen", sw("fs", s.hide_fullscreen, "hideFullscreen"))]);
+        self.h2(cv, "Restore");
+        let t = self.begin_card();
+        self.end_card(cv, t, vec![Row::new("Reset preferences", "Restore default settings. To-dos, events, water logs, and focus history are kept.", Ctl::Buttons(vec![
+            ("Reset settings".into(), 2, SAct::App(Action::ResetSettings)),
+        ]))]);
     }
 
     fn display(&mut self, app: &App, cv: &mut Canvas) {
@@ -528,7 +544,7 @@ impl SettingsUi {
             Row::col("Collapse after the mouse leaves", "", delay),
         ]);
         self.h2(cv, "Notch pages");
-        let rows = [("media", "Music"), ("calendar", "Calendar"), ("water", "Water"), ("todo", "To-do"), ("pomodoro", "Pomodoro")].iter()
+        let rows = [("home", "Home & quick controls"), ("notifications", "Notifications"), ("media", "Music"), ("calendar", "Calendar"), ("water", "Water"), ("todo", "To-do"), ("pomodoro", "Pomodoro")].iter()
             .map(|(id, l)| { let on = s.pages.get(id); Row::new(l, "", Ctl::Switch(format!("page-{}", id), on, Action::SetPage(id, !on))) }).collect();
         let t = self.begin_card();
         self.end_card(cv, t, rows);
@@ -537,6 +553,23 @@ impl SettingsUi {
     fn appearance(&mut self, app: &App, cv: &mut Canvas) {
         let s = &app.d.settings;
         self.h1(cv, "Appearance", "");
+        self.h2(cv, "Notch");
+        let colors = Ctl::Seg(vec![
+            ("Midnight".into(), s.capsule_color == "midnight", SAct::App(Action::SetCapsuleColor("midnight"))),
+            ("Slate".into(), s.capsule_color == "slate", SAct::App(Action::SetCapsuleColor("slate"))),
+            ("Plum".into(), s.capsule_color == "plum", SAct::App(Action::SetCapsuleColor("plum"))),
+            ("Ocean".into(), s.capsule_color == "ocean", SAct::App(Action::SetCapsuleColor("ocean"))),
+        ]);
+        let opacity = Ctl::Seg([70, 85, 100].iter().map(|v| (
+            format!("{}%", v), s.opacity == *v,
+            SAct::App(Action::SetOpacity(*v)),
+        )).collect());
+        let t = self.begin_card();
+        self.end_card(cv, t, vec![
+            Row::col("Capsule color", "Choose the notch body tint; page colors still identify each module.", colors),
+            Row::col("Transparency", "Lower opacity makes the whole notch less prominent.", opacity),
+            Row::new("Reduce motion", "Stops page and pill transitions and automatic Pochi cameos.", sw("reduced-motion", s.reduced_motion, "reducedMotion")),
+        ]);
         self.h2(cv, "Clock");
         let t = self.begin_card();
         self.end_card(cv, t, vec![Row::col("Time format", "", Ctl::Seg(vec![
@@ -907,6 +940,7 @@ impl SettingsUi {
         let path = self.data_path.clone();
         let t = self.begin_card();
         self.end_card(cv, t, vec![
+            Row::new("Releases and updates", "Open GitHub for the latest release notes and Windows downloads.", Ctl::Buttons(vec![("View releases".into(), 0, SAct::Platform("updates"))])),
             Row::new("Data is stored at", &path, Ctl::Buttons(vec![("Open folder".into(), 0, SAct::Platform("folder"))])),
             Row::new("Exit Pochi", "Quit the app completely (notch and tray icon)", Ctl::Buttons(vec![("Exit".into(), 2, SAct::Platform("exit"))])),
         ]);

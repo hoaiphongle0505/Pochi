@@ -130,14 +130,18 @@ pub struct Ui {
 }
 
 fn accent_of(page: &str) -> u32 {
-    match page { "media" => 0xff375f, "calendar" => 0xff5a5f, "water" => WATER, "todo" => GREEN, _ => 0xff453a }
+    match page { "home" => 0x8e8eff, "media" => 0xff375f, "calendar" => 0xff5a5f, "water" => WATER, "todo" => GREEN, _ => 0xff453a }
 }
 
 fn inside(r: (f32, f32, f32, f32), p: (f32, f32)) -> bool { p.0 >= r.0 && p.0 <= r.0 + r.2 && p.1 >= r.1 && p.1 <= r.1 + r.3 }
 
 impl Ui {
     pub fn new(app: &App) -> Ui {
-        let page = PAGE_IDS.iter().copied().find(|p| *p == app.d.settings.page_id()).unwrap_or("water");
+        let saved_page = app.d.settings.page_id();
+        let page = PAGE_IDS.iter().copied()
+            .find(|p| *p == saved_page && app.d.settings.pages.get(p))
+            .or_else(|| PAGE_IDS.iter().copied().find(|p| app.d.settings.pages.get(p)))
+            .unwrap_or("home");
         Ui {
             expanded: false, hovering: false, hover_at: -1.0, leave_at: -1.0, peek_until: -1.0, clock: 0.0,
             mouse: (-1.0, -1.0),
@@ -456,6 +460,7 @@ impl Ui {
     }
 
     fn pet(&mut self, app: &App) {
+        if app.d.settings.reduced_motion { return; }
         let cm = &mut self.cameo;
         if cm.sleep { cm.sleep = false; cm.alert_until = cm.clock + 0.8; }
         cm.pet_until = cm.clock + 2.2;
@@ -472,7 +477,7 @@ impl Ui {
 
     fn cameo_allowed(&self, app: &App) -> bool {
         let s = &app.d.settings;
-        if !s.mascot || self.expanded || app.pomo.running || self.busy() || self.alert.is_some() { return false; }
+        if !s.mascot || s.reduced_motion || self.expanded || app.pomo.running || self.busy() || self.alert.is_some() { return false; }
         if app.media.ok && app.media.playing && s.media_pill && s.pages.media { return false; }
         true
     }
@@ -508,6 +513,20 @@ impl Ui {
         self.clock += dt;
         self.cameo.clock = self.clock;
         let s = app.d.settings.clone();
+        let visible = Self::visible_pages(app);
+        let saved_page = s.page_id();
+        if visible.contains(&saved_page.as_str()) && saved_page != self.page {
+            self.prev_page = self.page;
+            self.page = visible.iter().copied().find(|p| *p == saved_page).unwrap_or("home");
+            self.page_t = if s.reduced_motion { 1.0 } else { 0.0 };
+            self.page_dir = 1.0;
+            self.water_edit = false;
+        } else if !visible.contains(&self.page) {
+            self.prev_page = self.page;
+            self.page = visible.first().copied().unwrap_or("home");
+            self.page_t = if s.reduced_motion { 1.0 } else { 0.0 };
+            self.water_edit = false;
+        }
 
         // hover → expand / leave → collapse
         if let Some(a) = &mut self.alert {
@@ -568,9 +587,11 @@ impl Ui {
             cameo_anim = true;
         }
         let cm = &mut self.cameo;
+        if s.reduced_motion { cm.hearts.clear(); }
         cm.hearts.retain(|h| cm.clock - h.1 < 1.2);
         for sp in [&mut cm.eyes, &mut cm.happy, &mut cm.paw, &mut cm.overlay, &mut cm.look_x, &mut cm.look_y, &mut cm.small] {
-            if sp.step(dt) { cameo_anim = true; }
+            if s.reduced_motion { sp.snap(sp.target); }
+            else if sp.step(dt) { cameo_anim = true; }
         }
         if !cm.hearts.is_empty() || self.clock < cm.alert_until { cameo_anim = true; }
 
@@ -602,16 +623,21 @@ impl Ui {
         }
         let mut anim = false;
         for sp in [&mut self.w, &mut self.h, &mut self.r, &mut self.ear, &mut self.content, &mut self.pill_alpha, &mut self.water_sub] {
-            if sp.step(dt) { anim = true; }
+            if s.reduced_motion { sp.snap(sp.target); }
+            else if sp.step(dt) { anim = true; }
         }
-        for sp in self.tweens.values_mut() { if sp.step(dt) { anim = true; } }
-        if self.page_t < 1.0 { self.page_t = (self.page_t + dt / 0.34).min(1.0); anim = true; }
-        let alert_anim = self.alert.as_ref().is_some_and(|a| a.kind != "water" || self.clock - a.t0 < 1.6 || (a.done_at >= 0.0 && self.clock - a.done_at < 1.8));
+        for sp in self.tweens.values_mut() {
+            if s.reduced_motion { sp.snap(sp.target); }
+            else if sp.step(dt) { anim = true; }
+        }
+        if s.reduced_motion { self.page_t = 1.0; }
+        else if self.page_t < 1.0 { self.page_t = (self.page_t + dt / 0.34).min(1.0); anim = true; }
+        let alert_anim = !s.reduced_motion && self.alert.as_ref().is_some_and(|a| a.kind != "water" || self.clock - a.t0 < 1.6 || (a.done_at >= 0.0 && self.clock - a.done_at < 1.8));
         if cameo_anim || alert_anim { anim = true; }
         if self.hovering && !self.expanded && self.hover_at >= 0.0 { anim = true; }
 
         // lyrics line change → small slide animation
-        if self.expanded && self.page == "media" && self.show_lyrics {
+        if self.expanded && self.page == "media" && self.show_lyrics && !s.reduced_motion {
             let l = current_lyric(app);
             if let Some(l) = l { if l != self.lyric_line { self.lyric_line = l; self.lyric_swap = self.clock; } }
             if self.clock - self.lyric_swap < 0.45 { anim = true; }
@@ -622,12 +648,19 @@ impl Ui {
         let mut wait = 60_000 - now % 60_000;
         if app.pomo.running { wait = wait.min(1000 - now % 1000); }
         if self.expanded && self.page == "media" && app.media.ok && app.media.playing { wait = wait.min(250); }
-        if playing && !self.expanded { wait = wait.min(66); } // pill equalizer ~15 fps
+        if playing && !self.expanded && !s.reduced_motion { wait = wait.min(66); } // pill equalizer ~15 fps
         if self.focus.is_some() { wait = wait.min(530 - now % 530); } // caret blink
         if self.peek_until > 0.0 || self.leave_at > 0.0 { wait = wait.min(50); }
-        if s.idle_after > 0 && !self.cameo.on {
+        if s.idle_after > 0 && !self.cameo.on && !s.reduced_motion {
             let left = ((s.idle_after as f32 - (self.clock - self.last_active)) * 1000.0) as i64;
             wait = wait.min(left.max(100));
+        }
+        if s.reduced_motion {
+            if let Some(alert) = &self.alert {
+                if !(alert.kind == "water" && alert.done_at < 0.0) {
+                    wait = wait.min(((alert.until - self.clock).max(0.0) * 1000.0) as i64 + 16);
+                }
+            }
         }
         (anim, wait.max(16))
     }
@@ -705,8 +738,14 @@ impl Ui {
         pb.line_to(x1, e);
         pb.cubic_to(x1, e - e * k, x1 + e - e * k, 0.0, x1 + e, 0.0);
         pb.close();
-        if let Some(p) = pb.finish() { cv.fill(&p, 0x000000, 1.0); }
-        if let Some(b) = &body { cv.fill(b, 0x000000, 1.0); }
+        let shell = match app.d.settings.capsule_color.as_str() {
+            "slate" => 0x15191f,
+            "plum" => 0x1b111e,
+            "ocean" => 0x0d1822,
+            _ => 0x000000,
+        };
+        if let Some(p) = pb.finish() { cv.fill(&p, shell, 1.0); }
+        if let Some(b) = &body { cv.fill(b, shell, 1.0); }
 
         // clip everything else to the body (only needed while the shell is smaller than its content)
         let steady = self.expanded && (w - EW).abs() < 1.0 && (h - EH).abs() < 1.5;
@@ -1054,6 +1093,8 @@ impl Ui {
     fn title_parts(&self) -> (&'static str, &'static str) {
         if self.page == "water" && self.water_edit { return ("Settings", ""); }
         match self.page {
+            "home" => ("Today", ""),
+            "notifications" => ("Notifications", ""),
             "calendar" => ("Calendar", " Today"),
             "water" => ("Water", " Reminder"),
             "todo" => ("Todo", "List"),
@@ -1173,6 +1214,8 @@ impl Ui {
     fn draw_page(&mut self, app: &App, cv: &mut Canvas, interactive: bool) {
         let saved_hits = self.hits.len();
         match self.page {
+            "home" => self.page_home(app, cv),
+            "notifications" => self.page_notifications(app, cv),
             "water" => if self.water_edit { self.page_water_edit(app, cv) } else { self.page_water(app, cv) },
             "todo" => self.page_todo(app, cv),
             "pomodoro" => self.page_pomodoro(app, cv),
@@ -1181,6 +1224,126 @@ impl Ui {
             _ => {}
         }
         if !interactive { self.hits.truncate(saved_hits); }
+    }
+
+    fn quick_card(
+        &mut self,
+        cv: &mut Canvas,
+        x: f32,
+        y: f32,
+        w: f32,
+        title: &str,
+        detail: &str,
+        color: u32,
+        page: &'static str,
+        control: Option<(&'static str, &'static str, Act)>,
+    ) {
+        let hov = self.hov(cv, x, y, w, 45.0);
+        cv.rrect(x, y, w, 45.0, 10.0, if hov { 0x242427 } else { CARD }, 1.0);
+        cv.circle(x + 13.0, y + 15.0, 3.5, color, 1.0);
+        let tx = x + 23.0;
+        let right = if control.is_some() { x + w - 39.0 } else { x + w - 10.0 };
+        let name = cv.ellipsize(title, 11.5, W::Semi, right - tx);
+        cv.text(tx, y + 18.0, &name, 11.5, W::Semi, WHITE, 1.0);
+        let detail = cv.ellipsize(detail, 11.0, W::Regular, right - tx);
+        cv.text(tx, y + 34.0, &detail, 11.0, W::Regular, MUTED, 1.0);
+        self.hit(cv, x, y, w, 45.0, Act::Goto(page));
+        if let Some((name, svg, act)) = control {
+            let bx = x + w - 31.0;
+            let by = y + 10.0;
+            let hot = self.hov(cv, bx, by, 22.0, 24.0);
+            cv.rrect(bx, by, 22.0, 24.0, 8.0, if hot { blend(color, 0xffffff, 0.3) } else { blend(CHIP, color, 0.25) }, 1.0);
+            cv.icon(name, svg, bx + 5.0, by + 5.0, 12.0, WHITE, 1.0);
+            self.hit(cv, bx, by, 22.0, 24.0, act);
+        } else {
+            cv.icon("right", icons::RIGHT, x + w - 22.0, y + 16.0, 12.0, 0x77777d, 1.0);
+        }
+    }
+
+    fn page_home(&mut self, app: &App, cv: &mut Canvas) {
+        let pages = &app.d.settings.pages;
+        let x = PX;
+        let w = PW - 12.0;
+        let small = (w - 16.0) / 3.0;
+        let row1 = PY + 5.0;
+        if pages.media {
+            let detail = if app.media.ok {
+                format!("{}{}", app.media.title, if app.media.artist.is_empty() { String::new() } else { format!(" · {}", app.media.artist) })
+            } else { "Nothing playing".into() };
+            let control = app.media.ok.then_some((
+                if app.media.playing { "pause" } else { "play" },
+                if app.media.playing { icons::PAUSE } else { icons::PLAY },
+                Act::Media("toggle"),
+            ));
+            self.quick_card(cv, x, row1, small, "Music", &detail, 0xff375f, "media", control);
+        }
+        if pages.pomodoro {
+            let detail = format!("{} · {}", app.pomo.phase.label(), time::mmss(app.pomo_remaining()));
+            self.quick_card(cv, x + small + 8.0, row1, small, "Focus timer", &detail, 0xff6b35, "pomodoro",
+                Some((if app.pomo.running { "pause" } else { "play" }, if app.pomo.running { icons::PAUSE } else { icons::PLAY }, Act::App(Action::PomoToggle))));
+        }
+        if pages.water {
+            let detail = format!("{} / {} L", liters(app.water_today()), liters(app.d.water.goal));
+            self.quick_card(cv, x + (small + 8.0) * 2.0, row1, small, "Water", &detail, WATER, "water",
+                Some(("drop", icons::DROP, Act::App(Action::Drink))));
+        }
+
+        let row2 = PY + 55.0;
+        let bottom = (w - 16.0) / 3.0;
+        let today = time::day_key(now_ms());
+        let now = now_ms();
+        if pages.calendar {
+            let next = app.d.events.iter().filter_map(|event| {
+                let (year, month, day) = time::parse_day_key(&event.date)?;
+                let (hour, minute) = parse_hm(&event.time).unwrap_or((23, 59));
+                let starts = time::from_local(year, month, day, hour, minute);
+                (starts >= now - 30 * 60_000).then_some((starts, event))
+            }).min_by_key(|(starts, _)| *starts);
+            let detail = next.map(|(starts, event)| {
+                let day = if event.date == today { "Today".to_string() }
+                    else if event.date == time::day_key(now + 86_400_000) { "Tomorrow".into() }
+                    else { format!("{} {}", time::local(starts).day, time::MONTHS[time::local(starts).month as usize - 1]) };
+                format!("{} · {}{}", event.title, day, if event.time.is_empty() { String::new() } else { format!(" {}", event.time) })
+            }).unwrap_or_else(|| "No upcoming events".into());
+            self.quick_card(cv, x, row2, bottom, "Calendar", &detail, 0xff5a5f, "calendar", None);
+        }
+        if pages.todo {
+            let task = app.d.todos.iter().find(|task| !task.done);
+            let detail = task.map(|task| task.text.as_str()).unwrap_or("No open tasks");
+            let control = task.map(|task| ("check", icons::CHECK, Act::App(Action::TodoToggle(task.id.clone()))));
+            self.quick_card(cv, x + bottom + 8.0, row2, bottom, "To-do", detail, GREEN, "todo", control);
+        }
+        if pages.notifications {
+            let detail = app.notifications.first().map(|note| format!("{} · {}", note.title, note.body))
+                .unwrap_or_else(|| "No recent notifications".into());
+            self.quick_card(cv, x + (bottom + 8.0) * 2.0, row2, bottom, "Notifications", &detail, 0x32ade6, "notifications", None);
+        }
+    }
+
+    fn page_notifications(&mut self, app: &App, cv: &mut Canvas) {
+        cv.text(PX, PY + 20.0, "Recent alerts", 13.0, W::Semi, MUTED, 1.0);
+        if !app.notifications.is_empty() {
+            let bx = PX + PW - 48.0;
+            let hov = self.hov(cv, bx, PY + 5.0, 42.0, 26.0);
+            cv.rrect(bx, PY + 5.0, 42.0, 26.0, 13.0, if hov { CHIP_H } else { CHIP }, 1.0);
+            cv.text_center(bx + 21.0, PY + 22.0, "Clear", 11.0, W::Semi, WHITE, 1.0);
+            self.hit(cv, bx, PY + 5.0, 42.0, 26.0, Act::App(Action::ClearNotifications));
+        }
+        if app.notifications.is_empty() {
+            cv.text(PX, PY + 62.0, "Reminders from Pochi will appear here.", 12.5, W::Regular, MUTED, 1.0);
+            return;
+        }
+        for (i, note) in app.notifications.iter().take(4).enumerate() {
+            let y = PY + 34.0 + i as f32 * 27.0;
+            let hov = self.hov(cv, PX, y, PW - 12.0, 24.0);
+            cv.rrect(PX, y, PW - 12.0, 24.0, 8.0, if hov { 0x242427 } else { CARD }, 1.0);
+            let title = cv.ellipsize(&note.title, 11.5, W::Semi, 122.0);
+            cv.text(PX + 9.0, y + 16.0, &title, 11.5, W::Semi, WHITE, 1.0);
+            let body = cv.ellipsize(&format!("{} · {}", note.body, time::hm24(note.created_at)), 11.0, W::Regular, PW - 164.0);
+            cv.text(PX + 139.0, y + 16.0, &body, 11.0, W::Regular, MUTED, 1.0);
+            let page = if app.d.settings.pages.get(note.page) { note.page } else { "home" };
+            self.hit(cv, PX, y, PW - 12.0, 24.0, Act::Goto(page));
+        }
     }
 
 

@@ -51,7 +51,7 @@ pub fn settings_preview(out: &str) {
     for sec in ["general", "display", "appearance", "media", "todo", "calendar", "pomodoro", "water", "hud", "about"] {
         su.goto(sec);
         for _ in 0..90 {
-            su.animating(1.0 / 60.0);
+            su.animating(1.0 / 60.0, app.d.settings.reduced_motion);
             let mut cv = Canvas { pm: &mut pm, s: scale, mask: None, alpha: 1.0, ox: 0.0, oy: 0.0, fonts: &mut fonts, icons: &mut icons };
             let t0 = std::time::Instant::now();
             su.draw(&mut app, &mut cv);
@@ -138,7 +138,7 @@ pub fn run() {
     ui.water_edit = true;
     frame(&mut ui, &mut app, &mut pm, 0.6, Some("water-edit"));
     ui.water_edit = false;
-    for p in ["todo", "pomodoro", "calendar", "media"] {
+    for p in ["home", "notifications", "todo", "pomodoro", "calendar", "media"] {
         ui.peek(&app, p, true, false);
         frame(&mut ui, &mut app, &mut pm, 1.2, Some(p));
     }

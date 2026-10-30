@@ -43,6 +43,9 @@ impl Media {
 #[derive(Clone, Default)]
 pub struct Lyrics { pub key: String, pub lines: Vec<(i64, String)> }
 
+#[derive(Clone, Debug)]
+pub struct Notification { pub title: String, pub body: String, pub page: &'static str, pub created_at: i64 }
+
 #[derive(Debug, Clone)]
 pub enum Effect {
     Notify { title: String, body: String },
@@ -61,6 +64,7 @@ pub struct App {
     pub water_next_at: i64,
     pub media: Media,
     pub lyrics: Lyrics,
+    pub notifications: Vec<Notification>,
     pub effects: Vec<Effect>,
     pub dirty_save: bool,
     pub changed: bool,
@@ -73,7 +77,7 @@ fn uid() -> String {
     format!("{:x}{:05x}", n, r)
 }
 
-pub const PAGE_IDS: [&str; 5] = ["media", "calendar", "water", "todo", "pomodoro"];
+pub const PAGE_IDS: [&str; 7] = ["home", "notifications", "media", "calendar", "water", "todo", "pomodoro"];
 pub const WATER_SNOOZE_MS: i64 = 10 * 60_000;
 pub const WATER_SNOOZE_MINUTES: i64 = 10;
 
@@ -86,6 +90,7 @@ impl App {
             water_next_at: 0,
             media: Media::default(),
             lyrics: Lyrics::default(),
+            notifications: Vec::new(),
             effects: vec![],
             dirty_save: false,
             changed: true,
@@ -182,6 +187,10 @@ impl App {
     fn notify(&mut self, title: &str, body: String, page: &'static str, kind: &'static str) {
         let body_copy = body.clone();
         let s = &self.d.settings;
+        if s.sys_notif || s.peek {
+            self.notifications.insert(0, Notification { title: title.into(), body: body_copy.clone(), page, created_at: now_ms() });
+            self.notifications.truncate(5);
+        }
         if s.sys_notif { self.effects.push(Effect::Notify { title: title.into(), body }); }
         if s.sounds { self.effects.push(Effect::Chime(kind)); }
         self.effects.push(Effect::Mood("alert"));
@@ -342,6 +351,7 @@ impl App {
                     "hidden" => { s.hidden = *v; self.effects.push(Effect::Visibility); }
                     "hoverExpand" => s.hover_expand = *v,
                     "clock24" => s.clock24 = *v,
+                    "reducedMotion" => s.reduced_motion = *v,
                     "showBattery" => s.show_battery = *v,
                     "showDate" => s.show_date = *v,
                     "peek" => s.peek = *v,
@@ -352,6 +362,52 @@ impl App {
                     _ => {}
                 }
             }
+            SetPreset(preset) => {
+                let s = &mut self.d.settings;
+                match *preset {
+                    "focus" => {
+                        s.pages = Pages { home: true, notifications: true, media: false, calendar: false, water: true, todo: true, pomodoro: true };
+                        s.minimal = true;
+                        s.auto_hide = false;
+                        s.mascot = false;
+                        s.idle_after = 0;
+                        s.media_peek = false;
+                        s.media_pill = false;
+                    }
+                    "work" => {
+                        s.pages = Pages::default();
+                        s.minimal = false;
+                        s.auto_hide = false;
+                        s.mascot = true;
+                        s.idle_after = 300;
+                        s.media_peek = true;
+                        s.media_pill = true;
+                    }
+                    "minimal" => {
+                        s.pages = Pages { home: true, notifications: false, media: false, calendar: false, water: false, todo: false, pomodoro: false };
+                        s.minimal = true;
+                        s.auto_hide = false;
+                        s.mascot = false;
+                        s.idle_after = 0;
+                        s.media_peek = false;
+                        s.media_pill = false;
+                    }
+                    _ => return,
+                }
+                s.page = serde_json::json!("home");
+            }
+            ClearNotifications => self.notifications.clear(),
+            ResetSettings => {
+                let water_log = std::mem::take(&mut self.d.water.log);
+                let pomo_stats = std::mem::take(&mut self.d.pomodoro.stats);
+                self.d.settings = Settings::default();
+                self.d.water = Water { log: water_log, ..Water::default() };
+                self.d.pomodoro = Pomodoro { stats: pomo_stats, ..Pomodoro::default() };
+                if !self.pomo.running { self.pomo.remaining = self.phase_ms(self.pomo.phase); }
+                let last = self.today_entries().last().map(|e| e.t).unwrap_or(now);
+                self.schedule_water(last);
+                self.effects.extend([Effect::Autostart, Effect::Visibility, Effect::Reposition]);
+            }
             SetPage(id, v) => self.d.settings.pages.set(id, *v),
             SetIdle(v) => self.d.settings.idle_after = *v,
             SetEventLead(v) => self.d.settings.event_lead = *v,
@@ -360,6 +416,8 @@ impl App {
             WaterGoalAbs(v) => self.d.water.goal = (*v).clamp(250, 6000),
             WaterBottleAbs(v) => self.d.water.bottle = (*v).clamp(100, 3000),
             SetSize(v) => { self.d.settings.size = match v { Some(n) => serde_json::json!(n), None => serde_json::json!("auto") }; self.effects.push(Effect::Reposition); }
+            SetOpacity(v) => self.d.settings.opacity = (*v).clamp(30, 100),
+            SetCapsuleColor(v) => self.d.settings.capsule_color = (*v).into(),
             SetDisplay(v) => { self.d.settings.display = v.clone(); self.effects.push(Effect::Reposition); }
             LastPage(p) => { self.d.settings.page = serde_json::json!(p); self.dirty_save = true; return; }
         }
@@ -386,6 +444,60 @@ mod tests {
         assert!((app.water_next_at - expected).abs() <= 1000);
         assert_eq!(app.water_today(), 0);
     }
+
+    #[test]
+    fn focus_profile_keeps_water_reminders_while_hiding_unneeded_pages() {
+        let mut app = App::new(Data::default());
+
+        app.action(&Action::SetPreset("focus"));
+
+        assert!(app.d.settings.pages.get("home"));
+        assert!(app.d.settings.pages.get("notifications"));
+        assert!(app.d.settings.pages.get("pomodoro"));
+        assert!(app.d.settings.pages.get("water"));
+        assert!(!app.d.settings.pages.get("media"));
+        assert!(!app.d.settings.pages.get("calendar"));
+        assert!(app.d.water.enabled);
+        assert_eq!(app.d.settings.page_id(), "home");
+    }
+
+    #[test]
+    fn reset_settings_preserves_user_content_and_history() {
+        let today = time::day_key(now_ms());
+        let mut data = Data::default();
+        data.todos.push(Todo { id: "task".into(), text: "Keep me".into(), ..Default::default() });
+        data.events.push(Event { id: "event".into(), title: "Keep this".into(), ..Default::default() });
+        data.water.log.insert(today.clone(), vec![Sip { t: now_ms(), ml: 200 }]);
+        data.pomodoro.stats.insert(today.clone(), 3);
+        data.settings.reduced_motion = true;
+        let mut app = App::new(data);
+
+        app.action(&Action::ResetSettings);
+
+        assert!(!app.d.settings.reduced_motion);
+        assert_eq!(app.d.todos[0].text, "Keep me");
+        assert_eq!(app.d.events[0].title, "Keep this");
+        assert_eq!(app.d.water.log[&today][0].ml, 200);
+        assert_eq!(app.d.pomodoro.stats.get(&today), Some(&3));
+    }
+
+    #[test]
+    fn notification_history_is_bounded_and_only_records_visible_notifications() {
+        let mut app = App::new(Data::default());
+        for i in 0..7 {
+            app.notify("Reminder", format!("item {i}"), "todo", "todo");
+        }
+        assert_eq!(app.notifications.len(), 5);
+        assert_eq!(app.notifications[0].body, "item 6");
+
+        app.d.settings.sys_notif = false;
+        app.d.settings.peek = false;
+        app.notify("Hidden", "not recorded".into(), "todo", "todo");
+        assert_eq!(app.notifications.len(), 5);
+
+        app.action(&Action::ClearNotifications);
+        assert!(app.notifications.is_empty());
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -395,6 +507,6 @@ pub enum Action {
     TodoAdd { text: String, time: Option<(u32, u32)>, daily: bool }, TodoToggle(String), TodoDelete(String), TodoClearDone,
     PomoToggle, PomoReset, PomoResetAll, PomoPhase(Phase), PomoSkip, PomoSet(u8, i32),
     EventAdd { title: String, date: String, time: Option<(u32, u32)> }, EventDelete(String), EventClearPast,
-    SetBool(&'static str, bool), SetPage(&'static str, bool), SetIdle(u32), SetEventLead(u32), SetPeekSeconds(u32), SetCollapse(u32), WaterGoalAbs(i32), WaterBottleAbs(i32),
-    SetSize(Option<u32>), SetDisplay(String), LastPage(&'static str),
+    SetBool(&'static str, bool), SetPage(&'static str, bool), SetPreset(&'static str), ResetSettings, ClearNotifications, SetIdle(u32), SetEventLead(u32), SetPeekSeconds(u32), SetCollapse(u32), WaterGoalAbs(i32), WaterBottleAbs(i32),
+    SetSize(Option<u32>), SetOpacity(u8), SetCapsuleColor(&'static str), SetDisplay(String), LastPage(&'static str),
 }
